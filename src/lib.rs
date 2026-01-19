@@ -8,6 +8,7 @@ use numpy::ndarray::Array2;
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use rs_opw_kinematics::kinematic_traits::{Kinematics, Pose};
 use rs_opw_kinematics::kinematics_impl::OPWKinematics;
+use rs_opw_kinematics::urdf;
 
 #[pyclass]
 struct Robot {
@@ -397,9 +398,87 @@ impl Robot {
     }
 }
 
+/// Load robot parameters from a URDF or XACRO file
+/// 
+/// :param file_path: Path to the URDF or XACRO file
+/// :param joint_names: Optional list of 6 joint names. If not provided, defaults to ["joint1", ..., "joint6"]
+/// :return: KinematicModel with extracted parameters
+#[pyfunction]
+#[pyo3(signature = (file_path, joint_names=None))]
+fn from_urdf_file(
+    file_path: String,
+    joint_names: Option<[String; 6]>,
+) -> PyResult<KinematicModel> {
+    let joint_names_ref = joint_names.as_ref().map(|names| {
+        let mut refs: [&str; 6] = Default::default();
+        for (i, name) in names.iter().enumerate() {
+            refs[i] = name.as_str();
+        }
+        refs
+    });
+
+    let urdf_params = urdf::from_urdf(
+        std::fs::read_to_string(&file_path)
+            .map_err(|e| pyo3::exceptions::PyIOError::new_err(format!("Failed to read file: {}", e)))?,
+        &joint_names_ref,
+    )
+    .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to parse URDF: {}", e)))?;
+
+    Ok(KinematicModel {
+        a1: urdf_params.a1,
+        a2: urdf_params.a2,
+        b: urdf_params.b,
+        c1: urdf_params.c1,
+        c2: urdf_params.c2,
+        c3: urdf_params.c3,
+        c4: urdf_params.c4,
+        offsets: [0.0; 6], // URDF doesn't contain offsets, they need to be set separately
+        flip_axes: urdf_params.sign_corrections.map(|sc| sc < 0),
+        has_parallelogram: false, // URDF doesn't contain this info
+    })
+}
+
+/// Load robot parameters from URDF XML content
+/// 
+/// :param xml_content: URDF XML content as string
+/// :param joint_names: Optional list of 6 joint names. If not provided, defaults to ["joint1", ..., "joint6"]
+/// :return: KinematicModel with extracted parameters
+#[pyfunction]
+#[pyo3(signature = (xml_content, joint_names=None))]
+fn from_urdf_string(
+    xml_content: String,
+    joint_names: Option<[String; 6]>,
+) -> PyResult<KinematicModel> {
+    let joint_names_ref = joint_names.as_ref().map(|names| {
+        let mut refs: [&str; 6] = Default::default();
+        for (i, name) in names.iter().enumerate() {
+            refs[i] = name.as_str();
+        }
+        refs
+    });
+
+    let urdf_params = urdf::from_urdf(xml_content, &joint_names_ref)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to parse URDF: {}", e)))?;
+
+    Ok(KinematicModel {
+        a1: urdf_params.a1,
+        a2: urdf_params.a2,
+        b: urdf_params.b,
+        c1: urdf_params.c1,
+        c2: urdf_params.c2,
+        c3: urdf_params.c3,
+        c4: urdf_params.c4,
+        offsets: [0.0; 6], // URDF doesn't contain offsets, they need to be set separately
+        flip_axes: urdf_params.sign_corrections.map(|sc| sc < 0),
+        has_parallelogram: false, // URDF doesn't contain this info
+    })
+}
+
 #[pymodule(name = "_internal")]
 fn py_opw_kinematics(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<KinematicModel>()?;
     m.add_class::<Robot>()?;
+    m.add_function(wrap_pyfunction!(from_urdf_file, m)?)?;
+    m.add_function(wrap_pyfunction!(from_urdf_string, m)?)?;
     Ok(())
 }

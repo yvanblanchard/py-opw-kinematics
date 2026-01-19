@@ -12,6 +12,7 @@ from numpy.typing import ArrayLike
 
 from ._internal import KinematicModel
 from ._internal import Robot as _RobotInternal
+from ._internal import from_urdf_file, from_urdf_string
 
 from scipy.spatial.transform import RigidTransform
 
@@ -212,4 +213,6 @@ __all__ = [
     "Robot",
     "RigidTransform",
     "interpolate_poses",
+    "from_urdf_file",
+    "from_urdf_string",
 ]

@@ -127,4 +127,33 @@ class Robot:
         """
         ...
 
-__all__: List[str] = ["KinematicModel", "Robot"]
+def from_urdf_file(
+    file_path: str,
+    joint_names: Optional[Tuple[str, str, str, str, str, str]] = None,
+) -> KinematicModel:
+    """
+    Load robot parameters from a URDF or XACRO file.
+
+    :param file_path: Path to the URDF or XACRO file.
+    :param joint_names: Optional tuple of 6 joint names. If not provided, defaults to ("joint1", ..., "joint6").
+    :return: KinematicModel with extracted parameters.
+    :raises IOError: If the file cannot be read.
+    :raises ValueError: If the URDF cannot be parsed or is not a valid OPW robot.
+    """
+    ...
+
+def from_urdf_string(
+    xml_content: str,
+    joint_names: Optional[Tuple[str, str, str, str, str, str]] = None,
+) -> KinematicModel:
+    """
+    Load robot parameters from URDF XML content.
+
+    :param xml_content: URDF XML content as string.
+    :param joint_names: Optional tuple of 6 joint names. If not provided, defaults to ("joint1", ..., "joint6").
+    :return: KinematicModel with extracted parameters.
+    :raises ValueError: If the URDF cannot be parsed or is not a valid OPW robot.
+    """
+    ...
+
+__all__: List[str] = ["KinematicModel", "Robot", "from_urdf_file", "from_urdf_string"]
