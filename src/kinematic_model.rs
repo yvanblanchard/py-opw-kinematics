@@ -16,6 +16,12 @@ pub struct KinematicModel {
     pub offsets: [f64; 6],
     pub flip_axes: [bool; 6], // Renamed and changed to boolean array
     pub has_parallelogram: bool,
+    /// Index of the joint that drives the parallelogram linkage (0-based, default: 1 = J2)
+    pub parallelogram_driven: usize,
+    /// Index of the joint coupled through the parallelogram linkage (0-based, default: 2 = J3)
+    pub parallelogram_coupled: usize,
+    /// Scaling factor: coupled_angle += scaling * driven_angle (default: 1.0)
+    pub parallelogram_scaling: f64,
 }
 
 impl KinematicModel {
@@ -58,7 +64,10 @@ impl KinematicModel {
         c4 = 0.0,
         offsets = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
         flip_axes = (false, false, false, false, false, false),
-        has_parallelogram = false
+        has_parallelogram = false,
+        parallelogram_driven = 1,
+        parallelogram_coupled = 2,
+        parallelogram_scaling = 1.0
     ))]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -72,7 +81,25 @@ impl KinematicModel {
         offsets: (f64, f64, f64, f64, f64, f64),
         flip_axes: (bool, bool, bool, bool, bool, bool),
         has_parallelogram: bool,
+        parallelogram_driven: usize,
+        parallelogram_coupled: usize,
+        parallelogram_scaling: f64,
     ) -> PyResult<Self> {
+        if parallelogram_driven >= 6 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "parallelogram_driven must be in range 0..5",
+            ));
+        }
+        if parallelogram_coupled >= 6 {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "parallelogram_coupled must be in range 0..5",
+            ));
+        }
+        if parallelogram_driven == parallelogram_coupled {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "parallelogram_driven and parallelogram_coupled must differ",
+            ));
+        }
         Ok(KinematicModel {
             a1,
             a2,
@@ -84,6 +111,9 @@ impl KinematicModel {
             offsets: offsets.into(),
             flip_axes: flip_axes.into(),
             has_parallelogram,
+            parallelogram_driven,
+            parallelogram_coupled,
+            parallelogram_scaling,
         })
     }
 
@@ -138,11 +168,34 @@ impl KinematicModel {
         self.has_parallelogram
     }
 
+    #[getter]
+    pub fn parallelogram_driven(&self) -> usize {
+        self.parallelogram_driven
+    }
+
+    #[getter]
+    pub fn parallelogram_coupled(&self) -> usize {
+        self.parallelogram_coupled
+    }
+
+    #[getter]
+    pub fn parallelogram_scaling(&self) -> f64 {
+        self.parallelogram_scaling
+    }
+
     pub fn __repr__(&self) -> String {
-        format!(
-            "KinematicModel(\n    a1={},\n    a2={},\n    b={},\n    c1={},\n    c2={},\n    c3={},\n    c4={},\n    offsets={:?},\n    flip_axes={:?},\n    has_parallelogram={}\n)",
+        let mut s = format!(
+            "KinematicModel(\n    a1={},\n    a2={},\n    b={},\n    c1={},\n    c2={},\n    c3={},\n    c4={},\n    offsets={:?},\n    flip_axes={:?},\n    has_parallelogram={}",
             self.a1, self.a2, self.b, self.c1, self.c2, self.c3, self.c4,
             self.offsets, self.flip_axes, self.has_parallelogram
-        )
+        );
+        if self.has_parallelogram {
+            s.push_str(&format!(
+                ",\n    parallelogram_driven={},\n    parallelogram_coupled={},\n    parallelogram_scaling={}",
+                self.parallelogram_driven, self.parallelogram_coupled, self.parallelogram_scaling
+            ));
+        }
+        s.push_str("\n)");
+        s
     }
 }

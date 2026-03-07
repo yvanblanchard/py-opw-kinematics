@@ -73,3 +73,7 @@ docs/_build/
 
 # Claude Code
 .claude/
+robot_poses.csv
+.venv312_backup/pyvenv.cfg
+Cargo.lock
+Cargo.lock
