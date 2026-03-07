@@ -14,6 +14,9 @@ use rs_opw_kinematics::urdf;
 struct Robot {
     robot: OPWKinematics,
     has_parallelogram: bool,
+    parallelogram_driven: usize,
+    parallelogram_coupled: usize,
+    parallelogram_scaling: f64,
     degrees: bool,
     _kinematic_model: KinematicModel,
 }
@@ -25,10 +28,16 @@ impl Robot {
     fn new(kinematic_model: KinematicModel, degrees: bool) -> PyResult<Self> {
         let robot = kinematic_model.to_opw_kinematics(degrees);
         let has_parallelogram = kinematic_model.has_parallelogram;
+        let parallelogram_driven = kinematic_model.parallelogram_driven;
+        let parallelogram_coupled = kinematic_model.parallelogram_coupled;
+        let parallelogram_scaling = kinematic_model.parallelogram_scaling;
 
         Ok(Robot {
             robot,
             has_parallelogram,
+            parallelogram_driven,
+            parallelogram_coupled,
+            parallelogram_scaling,
             degrees,
             _kinematic_model: kinematic_model,
         })
@@ -56,7 +65,7 @@ impl Robot {
     #[pyo3(signature = (joints, ee_transform=None))]
     fn forward(&self, mut joints: [f64; 6], ee_transform: Option<[[f64; 4]; 4]>) -> [[f64; 4]; 4] {
         if self.has_parallelogram {
-            joints[2] += joints[1];
+            joints[self.parallelogram_coupled] += self.parallelogram_scaling * joints[self.parallelogram_driven];
         }
         if self.degrees {
             joints.iter_mut().for_each(|x| *x = x.to_radians());
@@ -179,7 +188,7 @@ impl Robot {
         let mut solutions = match current_joints {
             Some(mut joints) => {
                 if self.has_parallelogram {
-                    joints[2] += joints[1];
+                    joints[self.parallelogram_coupled] += self.parallelogram_scaling * joints[self.parallelogram_driven];
                 }
                 if self.degrees {
                     joints.iter_mut().for_each(|x| *x = x.to_radians());
@@ -190,7 +199,9 @@ impl Robot {
         };
 
         if self.has_parallelogram {
-            solutions.iter_mut().for_each(|x| x[2] -= x[1]);
+            solutions.iter_mut().for_each(|x| {
+                x[self.parallelogram_coupled] -= self.parallelogram_scaling * x[self.parallelogram_driven];
+            });
         }
 
         if self.degrees {
@@ -318,6 +329,10 @@ impl Robot {
             j.iter_mut().for_each(|x| *x = x.to_radians());
         }
 
+        if self.has_parallelogram {
+            j[self.parallelogram_coupled] += self.parallelogram_scaling * j[self.parallelogram_driven];
+        }
+
         for i in 0..6 {
             if params.flip_axes[i] {
                 j[i] = -j[i];
@@ -435,6 +450,9 @@ fn from_urdf_file(
         offsets: [0.0; 6], // URDF doesn't contain offsets, they need to be set separately
         flip_axes: urdf_params.sign_corrections.map(|sc| sc < 0),
         has_parallelogram: false, // URDF doesn't contain this info
+        parallelogram_driven: 1,
+        parallelogram_coupled: 2,
+        parallelogram_scaling: 1.0,
     })
 }
 
@@ -471,6 +489,9 @@ fn from_urdf_string(
         offsets: [0.0; 6], // URDF doesn't contain offsets, they need to be set separately
         flip_axes: urdf_params.sign_corrections.map(|sc| sc < 0),
         has_parallelogram: false, // URDF doesn't contain this info
+        parallelogram_driven: 1,
+        parallelogram_coupled: 2,
+        parallelogram_scaling: 1.0,
     })
 }
 
