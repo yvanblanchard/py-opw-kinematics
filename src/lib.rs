@@ -1,4 +1,5 @@
 mod kinematic_model;
+pub mod movej;
 use crate::kinematic_model::KinematicModel;
 
 use nalgebra::{Isometry3, Rotation3, Translation3, Vector3};
