@@ -6,8 +6,8 @@ Mirrors the Rust test in irb7600_test.rs and movej.rs:
   - Defines joint limits (ABB standard)
   - Performs FK sanity check on the start configuration
   - Enumerates all IK branches at the end pose
-  - Interpolates in joint space and checks for joint-limit violations
-  - Picks the closest-branch plan and reports results
+  - Uses Robot.move_j_from_joints() for closest-branch planning
+  - Checks for joint-limit violations along the interpolated path
 
 Run directly:
     python example_movej.py
@@ -18,7 +18,7 @@ Or via pytest:
 
 import math
 import numpy as np
-from py_opw_kinematics.numpy_wrapper import KinematicModel, Robot
+from py_opw_kinematics.numpy_wrapper import KinematicModel, MoveJPlan, Robot
 
 
 # ---------------------------------------------------------------------------
@@ -70,14 +70,6 @@ JOINT_LIMITS_DEG = [
 ]
 
 
-def joints_compliant(joints_deg: np.ndarray) -> bool:
-    """Check whether a joint configuration is within limits (degrees)."""
-    for j, (lo, hi) in zip(joints_deg, JOINT_LIMITS_DEG):
-        if j < lo or j > hi:
-            return False
-    return True
-
-
 # ---------------------------------------------------------------------------
 # ABB quaternion -> 4x4 rotation matrix  (scalar-first: w, x, y, z)
 # ---------------------------------------------------------------------------
@@ -112,55 +104,6 @@ def pose_mm(x: float, y: float, z: float,
 
 
 # ---------------------------------------------------------------------------
-# MoveJ interpolation + joint-limit check (pure Python, mirrors movej.rs)
-# ---------------------------------------------------------------------------
-
-def interpolate_and_check(q_start, q_end, steps=50):
-    """
-    Linearly interpolate between q_start and q_end in joint space.
-
-    Returns (path, violation_at, joint_deltas) where:
-      - path: list of (steps+1) joint arrays
-      - violation_at: index of first joint-limit violation, or None
-      - joint_deltas: per-joint absolute travel (degrees)
-    """
-    q_start = np.asarray(q_start, dtype=np.float64)
-    q_end = np.asarray(q_end, dtype=np.float64)
-    joint_deltas = np.abs(q_end - q_start)
-
-    path = []
-    violation_at = None
-    for i in range(steps + 1):
-        t = i / steps
-        q = q_start + t * (q_end - q_start)
-        path.append(q)
-        if violation_at is None and not joints_compliant(q):
-            violation_at = i
-
-    return path, violation_at, joint_deltas
-
-
-def plan_move_j_from_joints(robot, q_start_deg, end_pose, steps=50):
-    """
-    Plan a moveJ from known start joints to an end Cartesian pose.
-
-    Uses inverse kinematics (with current_joints for branch continuity)
-    to pick q_end, then interpolates in joint space.
-
-    Returns (q_end, path, violation_at, joint_deltas) or raises if IK fails.
-    """
-    solutions = robot.inverse(end_pose, current_joints=tuple(q_start_deg),
-                              ee_transform=TCP_OFFSET)
-    if not solutions:
-        raise RuntimeError("End pose unreachable (no IK solution)")
-    q_end = np.asarray(solutions[0])
-    path, violation_at, joint_deltas = interpolate_and_check(
-        np.asarray(q_start_deg), q_end, steps
-    )
-    return q_end, path, violation_at, joint_deltas
-
-
-# ---------------------------------------------------------------------------
 # Test: MoveJ detects joint-limit violation between two targets
 # ---------------------------------------------------------------------------
 
@@ -190,32 +133,41 @@ def test_movej_detects_joint_limit_violation():
     p2 = pose_mm(3226.61, 1224.48, 150.00,
                  0.000000, -0.342110, 0.939660, 0.000000)
 
-    # Enumerate every IK branch at target 2
+    # Enumerate every IK branch at target 2 and check each via move_j_from_joints
+    # (using each branch's q_end as a fake "start" for FK, then re-solving)
     all_solutions = robot.inverse(p2, ee_transform=TCP_OFFSET)
     print(f"Target 2: {len(all_solutions)} IK branch(es).")
 
+    # For each branch, build a plan from q_start_deg with that branch's FK pose
+    # to see which branches cause violations
     any_violation = False
     for k, sol in enumerate(all_solutions):
         q_end = np.asarray(sol)
-        _, violation_at, deltas = interpolate_and_check(q_start_deg, q_end, steps=50)
+        # Use the wrapper's interpolation to check this specific branch
+        from py_opw_kinematics.numpy_wrapper import _interpolate_and_check
+        plan = _interpolate_and_check(q_start_deg, q_end, JOINT_LIMITS_DEG, steps=50)
         print(
-            f"  branch {k}: q_end (deg) = {np.array2string(q_end, precision=2, suppress_small=True)}"
-            f"  violation_at = {violation_at}"
-            f"  deltas (deg) = {np.array2string(deltas, precision=2, suppress_small=True)}"
+            f"  branch {k}: q_end (deg) = {np.array2string(plan.q_end, precision=2, suppress_small=True)}"
+            f"  violation_at = {plan.violation_at}"
+            f"  deltas (deg) = {np.array2string(plan.joint_deltas, precision=2, suppress_small=True)}"
         )
-        if violation_at is not None:
+        if plan.violation_at is not None:
             any_violation = True
 
-    # Closest-branch plan (like the real controller would pick)
-    q_end, path, violation_at, deltas = plan_move_j_from_joints(
-        robot, q_start_deg, p2, steps=50
+    # Closest-branch plan via the Robot API
+    plan = robot.move_j_from_joints(
+        q_start_deg, p2,
+        joint_limits=JOINT_LIMITS_DEG, steps=50,
+        ee_transform=TCP_OFFSET,
     )
     print(
-        f"closest-branch plan: q_end (deg) = {np.array2string(q_end, precision=2, suppress_small=True)}"
-        f"  deltas (deg) = {np.array2string(deltas, precision=2, suppress_small=True)}"
-        f"  violation_at = {violation_at}"
+        f"closest-branch plan: q_end (deg) = {np.array2string(plan.q_end, precision=2, suppress_small=True)}"
+        f"  deltas (deg) = {np.array2string(plan.joint_deltas, precision=2, suppress_small=True)}"
+        f"  violation_at = {plan.violation_at}"
     )
 
+    assert isinstance(plan, MoveJPlan)
+    assert plan.path.shape == (51, 6)
     assert any_violation, (
         "Expected at least one IK branch at target 2 to cause a joint-limit "
         "violation on the moveJ path"
@@ -243,22 +195,24 @@ def test_movej_basic_roundtrip():
     # Get end pose via FK of q_mid
     end_pose = robot.forward(tuple(q_mid_deg), ee_transform=TCP_OFFSET)
 
-    q_end, path, violation_at, deltas = plan_move_j_from_joints(
-        robot, q_start_deg, end_pose, steps=20
+    plan = robot.move_j_from_joints(
+        q_start_deg, end_pose,
+        joint_limits=JOINT_LIMITS_DEG, steps=20,
+        ee_transform=TCP_OFFSET,
     )
 
     # Path endpoints match
-    assert np.allclose(path[0], q_start_deg, atol=1e-9), "path[0] != q_start"
-    assert np.allclose(path[-1], q_end, atol=1e-9), "path[-1] != q_end"
-    assert len(path) == 21, f"Expected 21 samples, got {len(path)}"
+    assert np.allclose(plan.path[0], plan.q_start, atol=1e-9), "path[0] != q_start"
+    assert np.allclose(plan.path[-1], plan.q_end, atol=1e-9), "path[-1] != q_end"
+    assert plan.path.shape == (21, 6), f"Expected (21, 6), got {plan.path.shape}"
 
     # No violations expected for these mild poses
-    if violation_at is not None:
-        print(f"  (unexpected violation at step {violation_at})")
+    if plan.violation_at is not None:
+        print(f"  (unexpected violation at step {plan.violation_at})")
 
     print(
         f"PASS  test_movej_basic_roundtrip"
-        f"  steps={len(path)-1}  deltas={np.array2string(deltas, precision=2)}"
+        f"  steps={plan.path.shape[0]-1}  deltas={np.array2string(plan.joint_deltas, precision=2)}"
     )
 
 
@@ -275,24 +229,51 @@ def test_movej_with_base_rotation():
 
     q_start_deg = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
-    # FK -> IK roundtrip
+    # FK -> plan moveJ back to the same pose (should be near-zero travel)
     fk_pose = robot.forward(tuple(q_start_deg), ee_transform=TCP_OFFSET)
-    solutions = robot.inverse(fk_pose, current_joints=tuple(q_start_deg),
-                              ee_transform=TCP_OFFSET)
 
-    assert len(solutions) > 0, "Expected at least one IK solution"
-
-    # Pick closest solution and plan a moveJ back to the same pose
-    q_end, path, violation_at, deltas = plan_move_j_from_joints(
-        robot, q_start_deg, fk_pose, steps=10
+    plan = robot.move_j_from_joints(
+        q_start_deg, fk_pose,
+        steps=10,
+        ee_transform=TCP_OFFSET,
     )
 
-    # Since start and end are the same pose, deltas should be near zero
-    # (on the same IK branch)
-    max_delta = np.max(deltas)
+    max_delta = np.max(plan.joint_deltas)
     print(
         f"PASS  test_movej_with_base_rotation"
-        f"  max_delta={max_delta:.4f} deg  violation_at={violation_at}"
+        f"  max_delta={max_delta:.4f} deg  violation_at={plan.violation_at}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test: move_j (both poses as Cartesian, seeded by previous joints)
+# ---------------------------------------------------------------------------
+
+def test_movej_from_two_poses():
+    """
+    Use Robot.move_j() which solves IK for both start and end poses.
+    """
+    robot = make_irb7600(base_rotation_deg=0.0, degrees=True)
+
+    q_prev = np.array([10.0, 10.0, 0.0, 0.0, 20.0, 0.0])
+    start_pose = robot.forward(tuple(q_prev), ee_transform=TCP_OFFSET)
+
+    q_target = np.array([20.0, 15.0, 10.0, 0.0, 30.0, 10.0])
+    end_pose = robot.forward(tuple(q_target), ee_transform=TCP_OFFSET)
+
+    plan = robot.move_j(
+        start_pose, end_pose, previous=q_prev,
+        joint_limits=JOINT_LIMITS_DEG, steps=30,
+        ee_transform=TCP_OFFSET,
+    )
+
+    assert isinstance(plan, MoveJPlan)
+    assert plan.path.shape == (31, 6)
+    assert plan.violation_at is None, f"Unexpected violation at {plan.violation_at}"
+
+    print(
+        f"PASS  test_movej_from_two_poses"
+        f"  deltas={np.array2string(plan.joint_deltas, precision=2)}"
     )
 
 
@@ -305,6 +286,7 @@ if __name__ == "__main__":
         test_movej_detects_joint_limit_violation,
         test_movej_basic_roundtrip,
         test_movej_with_base_rotation,
+        test_movej_from_two_poses,
     ]
 
     passed = 0
