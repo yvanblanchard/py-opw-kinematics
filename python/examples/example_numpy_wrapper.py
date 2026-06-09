@@ -21,7 +21,6 @@ import numpy as np
 from py_opw_kinematics.numpy_wrapper import (
     KinematicModel,
     Robot,
-    from_urdf_file,
     from_urdf_string,
 )
 
@@ -147,7 +146,7 @@ def test_fk_ik_roundtrip_radians():
         pose2 = robot.forward(sol)
         assert np.allclose(pose[:3, 3], pose2[:3, 3], atol=1e-3)
         assert np.allclose(pose[:3, :3], pose2[:3, :3], atol=1e-3)
-    print(f"PASS  test_fk_ik_roundtrip_radians")
+    print("PASS  test_fk_ik_roundtrip_radians")
 
 
 # ---------------------------------------------------------------------------
