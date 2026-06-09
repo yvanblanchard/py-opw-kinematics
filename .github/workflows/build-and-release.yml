@@ -215,18 +215,20 @@ jobs:
         with:
           python-version: "3.12"
       - name: Generate artifact attestation
+        continue-on-error: true
         uses: actions/attest-build-provenance@v1
         with:
           subject-path: 'wheels-*/*'
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
         uses: PyO3/maturin-action@v1
         with:
           command: upload
           args: --non-interactive --skip-existing wheels-*/*
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
           files: |
             wheels-sdist/*.tar.gz
