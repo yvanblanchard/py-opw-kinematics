@@ -76,4 +76,4 @@ docs/_build/
 robot_poses.csv
 .venv312_backup/pyvenv.cfg
 Cargo.lock
-Cargo.lock
+irb7600_test.rs
