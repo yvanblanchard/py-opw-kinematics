@@ -15,9 +15,10 @@ from_urdf_string — Load KinematicModel from URDF XML string.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import List, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
+import numpy.typing as npt
 
 from ._internal import KinematicModel
 from ._internal import Robot as _RobotInternal
@@ -62,25 +63,23 @@ class MoveJPlan:
     joint_deltas: np.ndarray
 
 
-def _to_joints6(joints: Joints6) -> Tuple[float, ...]:
-    """Convert any sequence of 6 floats to a plain tuple for the Rust layer."""
+Joints6Tuple = Tuple[float, float, float, float, float, float]
+
+
+def _to_joints6(joints: Joints6) -> Joints6Tuple:
+    """Convert any sequence of 6 floats to a fixed-length tuple for the Rust layer."""
     arr = np.asarray(joints, dtype=np.float64).ravel()
     if arr.shape != (6,):
         raise ValueError(f"Expected 6 joint values, got shape {arr.shape}")
-    return tuple(float(v) for v in arr)
+    return cast(Joints6Tuple, tuple(float(v) for v in arr))
 
 
-def _to_4x4_list(matrix: np.ndarray) -> list:
-    """Convert (4,4) numpy array to nested Python list for the Rust layer."""
+def _to_4x4_array(matrix: np.ndarray) -> npt.NDArray[np.float64]:
+    """Ensure a (4,4) array is a contiguous float64 NDArray for the Rust layer."""
     m = np.asarray(matrix, dtype=np.float64)
     if m.shape != (4, 4):
         raise ValueError(f"Expected (4,4) matrix, got {m.shape}")
-    return m.tolist()
-
-
-def _from_4x4_list(nested: list) -> Pose4x4:
-    """Convert nested-list 4×4 result from Rust back to a numpy array."""
-    return np.array(nested, dtype=np.float64)
+    return np.ascontiguousarray(m)
 
 
 def _interpolate_and_check(
@@ -163,9 +162,8 @@ class Robot:
             Homogeneous transformation matrix of the TCP in world frame.
         """
         j6 = _to_joints6(joints)
-        ee = None if ee_transform is None else _to_4x4_list(ee_transform)
-        result = self._robot.forward(j6, ee)
-        return _from_4x4_list(result)
+        ee = None if ee_transform is None else _to_4x4_array(ee_transform)
+        return self._robot.forward(j6, ee)
 
     def inverse(
         self,
@@ -190,10 +188,10 @@ class Robot:
         list of ndarray (6,)
             All valid joint solutions. May be empty if unreachable.
         """
-        pose_list = _to_4x4_list(pose)
+        pose_arr = _to_4x4_array(pose)
         cj = None if current_joints is None else _to_joints6(current_joints)
-        ee = None if ee_transform is None else _to_4x4_list(ee_transform)
-        raw = self._robot.inverse(pose_list, cj, ee)
+        ee = None if ee_transform is None else _to_4x4_array(ee_transform)
+        raw = self._robot.inverse(pose_arr, cj, ee)
         return [np.array(sol, dtype=np.float64) for sol in raw]
 
     def forward_frames(
@@ -210,9 +208,8 @@ class Robot:
             Transforms for [Base, J1, J2, J3, J4, J5, J6, TCP] (8 frames).
         """
         j6 = _to_joints6(joints)
-        ee = None if ee_transform is None else _to_4x4_list(ee_transform)
-        raw = self._robot.forward_frames(j6, ee)
-        return [_from_4x4_list(f) for f in raw]
+        ee = None if ee_transform is None else _to_4x4_array(ee_transform)
+        return list(self._robot.forward_frames(j6, ee))
 
     # ------------------------------------------------------------------
     # MoveJ / PTP planning
@@ -262,8 +259,8 @@ class Robot:
         if steps < 1:
             raise ValueError("steps must be >= 1")
         prev = _to_joints6(previous)
-        ee = None if ee_transform is None else _to_4x4_list(ee_transform)
-        solutions = self._robot.inverse(_to_4x4_list(start), prev, ee)
+        ee = None if ee_transform is None else _to_4x4_array(ee_transform)
+        solutions = self._robot.inverse(_to_4x4_array(start), prev, ee)
         if not solutions:
             raise ValueError("Start pose unreachable (no IK solution)")
         q_start = np.array(solutions[0], dtype=np.float64)
@@ -310,9 +307,9 @@ class Robot:
         qs = np.asarray(q_start, dtype=np.float64).ravel()
         if qs.shape != (6,):
             raise ValueError(f"Expected 6 joint values, got shape {qs.shape}")
-        cj = tuple(float(v) for v in qs)
-        ee = None if ee_transform is None else _to_4x4_list(ee_transform)
-        solutions = self._robot.inverse(_to_4x4_list(end), cj, ee)
+        cj = cast(Joints6Tuple, tuple(float(v) for v in qs))
+        ee = None if ee_transform is None else _to_4x4_array(ee_transform)
+        solutions = self._robot.inverse(_to_4x4_array(end), cj, ee)
         if not solutions:
             raise ValueError("End pose unreachable (no IK solution)")
         qe = np.array(solutions[0], dtype=np.float64)
@@ -345,7 +342,7 @@ class Robot:
         arr = np.ascontiguousarray(joints, dtype=np.float64)
         if arr.ndim != 2 or arr.shape[1] != 6:
             raise ValueError(f"joints must be (N,6), got {arr.shape}")
-        ee = None if ee_transform is None else _to_4x4_list(ee_transform)
+        ee = None if ee_transform is None else _to_4x4_array(ee_transform)
         flat = self._robot.batch_forward(arr, ee)          # (N, 16)
         return flat.reshape(-1, 4, 4)
 
@@ -379,5 +376,5 @@ class Robot:
         if arr.ndim != 2 or arr.shape[1] != 16:
             raise ValueError(f"poses must be (N,4,4) or (N,16), got {arr.shape}")
         cj = None if current_joints is None else _to_joints6(current_joints)
-        ee = None if ee_transform is None else _to_4x4_list(ee_transform)
+        ee = None if ee_transform is None else _to_4x4_array(ee_transform)
         return self._robot.batch_inverse(arr, cj, ee)      # (N, 6)
